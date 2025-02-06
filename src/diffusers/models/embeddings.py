@@ -1167,55 +1167,49 @@ def get_1d_rotary_pos_embed(
         freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64     # [S, D/2]
         return freqs_cis
 
-
 def apply_rotary_emb(
-    x: torch.Tensor,
+    x: torch.Tensor,  # now expects [B, S, H, D] format
     freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor]],
     use_real: bool = True,
     use_real_unbind_dim: int = -1,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Apply rotary embeddings to input tensors using the given frequency tensor. This function applies rotary embeddings
-    to the given query or key 'x' tensors using the provided frequency tensor 'freqs_cis'. The input tensors are
-    reshaped as complex numbers, and the frequency tensor is reshaped for broadcasting compatibility. The resulting
-    tensors contain rotary embeddings and are returned as real tensors.
-
+    Apply rotary embeddings to input tensors using the given frequency tensor.
+    Modified to work with flash attention format [batch, seq_len, heads, dim].
+    
     Args:
         x (`torch.Tensor`):
-            Query or key tensor to apply rotary embeddings. [B, H, S, D] xk (torch.Tensor): Key tensor to apply
-        freqs_cis (`Tuple[torch.Tensor]`): Precomputed frequency tensor for complex exponentials. ([S, D], [S, D],)
-
+            Query or key tensor to apply rotary embeddings. [B, S, H, D]
+        freqs_cis (`Tuple[torch.Tensor]`): 
+            Precomputed frequency tensor for complex exponentials. ([S, D], [S, D])
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
+        torch.Tensor: Modified tensor with rotary embeddings in [B, S, H, D] format.
     """
     if use_real:
         cos, sin = freqs_cis  # [S, D]
-        cos = cos[None, None]
-        sin = sin[None, None]
+        # Reshape for broadcasting: [1, S, 1, D]
+        cos = cos.unsqueeze(0).unsqueeze(2)
+        sin = sin.unsqueeze(0).unsqueeze(2)
         cos, sin = cos.to(x.device), sin.to(x.device)
-
+        
         if use_real_unbind_dim == -1:
-            # Used for flux, cogvideox, hunyuan-dit
-            x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)  # [B, S, H, D//2]
+            # Reshape maintaining [B, S, H, D] format
+            x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(-1)
             x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
         elif use_real_unbind_dim == -2:
-            # Used for Stable Audio
-            x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(-2)  # [B, S, H, D//2]
+            x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(-2)
             x_rotated = torch.cat([-x_imag, x_real], dim=-1)
         else:
             raise ValueError(f"`use_real_unbind_dim={use_real_unbind_dim}` but should be -1 or -2.")
-
+            
         out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
-
         return out
     else:
         # used for lumina
         x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
-        freqs_cis = freqs_cis.unsqueeze(2)
+        freqs_cis = freqs_cis.unsqueeze(1)  # Changed from unsqueeze(2) to unsqueeze(1)
         x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
-
         return x_out.type_as(x)
-
 
 def apply_rotary_emb_allegro(x: torch.Tensor, freqs_cis, positions):
     # TODO(aryan): rewrite
@@ -1248,8 +1242,7 @@ class FluxPosEmbed(nn.Module):
         sin_out = []
         pos = ids.float()
         is_mps = ids.device.type == "mps"
-        is_npu = ids.device.type == "npu"
-        freqs_dtype = torch.float32 if (is_mps or is_npu) else torch.float64
+        freqs_dtype = torch.float32 if is_mps else torch.float64
         for i in range(n_axes):
             cos, sin = get_1d_rotary_pos_embed(
                 self.axes_dim[i],
@@ -1787,7 +1780,7 @@ class LuminaCombinedTimestepCaptionEmbedding(nn.Module):
     def forward(self, timestep, caption_feat, caption_mask):
         # timestep embedding:
         time_freq = self.time_proj(timestep)
-        time_embed = self.timestep_embedder(time_freq.to(dtype=caption_feat.dtype))
+        time_embed = self.timestep_embedder(time_freq.to(dtype=self.timestep_embedder.linear_1.weight.dtype))
 
         # caption condition embedding:
         caption_mask_float = caption_mask.float().unsqueeze(-1)
