@@ -101,7 +101,7 @@ class TextToImageBenchmark(BaseBenchmak):
 
         if args.dtype == "FP8":
             quantize_(pipe.text_encoder, float8_weight_only())
-            quantize_(pipe.transformer, float8_dynamic_activation_float8_weight())
+            quantize_(pipe.transformer, float8_weight_only())
             
         if args.cache_opt:
             apply_cache_on_pipe(pipe, residual_diff_threshold=0.08)
