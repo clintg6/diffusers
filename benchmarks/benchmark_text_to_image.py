@@ -27,7 +27,7 @@ if __name__ == "__main__":
         "--dtype",
         type=str,
         default="FP16",
-        choices=("FP16", "FP32", "BF16"),
+        choices=("FP16", "FP32", "BF16", "FP8"),
     )
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--num_inference_steps", type=int, default=50)

@@ -3,6 +3,7 @@ import sys
 
 import torch
 from para_attn.first_block_cache.diffusers_adapters import apply_cache_on_pipe
+from torchao.quantization import quantize_, float8_dynamic_activation_float8_weight, float8_weight_only
 
 from tqdm import tqdm
 from diffusers.utils import load_image
@@ -86,7 +87,7 @@ class TextToImageBenchmark(BaseBenchmak):
     def __init__(self, args):
         if args.dtype == "FP16":
             pipe = self.pipeline_class.from_pretrained(args.ckpt, torch_dtype=torch.float16)
-        elif args.dtype == "BF16":
+        elif args.dtype == "BF16" or args.dtype == "FP8":
             pipe = self.pipeline_class.from_pretrained(args.ckpt, torch_dtype=torch.bfloat16)
         elif args.dtype == "FP32":
             pipe = self.pipeline_class.from_pretrained(args.ckpt, torch_dtype=torch.float32)
@@ -98,6 +99,10 @@ class TextToImageBenchmark(BaseBenchmak):
         #pipe.enable_vae_slicing()
         #pipe.enable_vae_tiling()
 
+        if args.dtype == "FP8":
+            quantize_(pipe.text_encoder, float8_weight_only())
+            quantize_(pipe.transformer, float8_dynamic_activation_float8_weight())
+            
         if args.cache_opt:
             apply_cache_on_pipe(pipe, residual_diff_threshold=0.08)
 
@@ -106,7 +111,7 @@ class TextToImageBenchmark(BaseBenchmak):
                 #pipe.transformer.to(memory_format=torch.channels_last)
                 #pipe.vae.to(memory_format=torch.channels_last)
                 print("Run torch compile")
-                if args.cache_opt:
+                if args.cache_opt or args.dtype == "FP8":
                     pipe.transformer = torch.compile(pipe.transformer, mode="default", fullgraph=False)
                 else:
                     pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead", fullgraph=True)
