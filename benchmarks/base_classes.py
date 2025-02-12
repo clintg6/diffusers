@@ -100,8 +100,7 @@ class TextToImageBenchmark(BaseBenchmak):
         #pipe.enable_vae_tiling()
 
         if args.dtype == "FP8":
-            quantize_(pipe.text_encoder, float8_weight_only())
-            quantize_(pipe.transformer, float8_weight_only())
+            quantize_(pipe.transformer, float8_dynamic_activation_float8_weight(torch.float8_e4m3fnuz, torch.float8_e4m3fnuz))
             
         if args.cache_opt:
             apply_cache_on_pipe(pipe, residual_diff_threshold=0.08)
